@@ -4,8 +4,10 @@ import fetch from 'node-fetch'
 
 export const dadJokeToolDefinition = {
   name: 'dad_joke',
+  // name: 'weather_tool', // intentional sabotage
   parameters: z.object({}),
-  description: 'get a dad joke',
+  description: 'returns a random dad joke',
+  // description: 'use this tool to get the weather', // intentional sabotage
 }
 
 type Args = z.infer<typeof dadJokeToolDefinition.parameters>
