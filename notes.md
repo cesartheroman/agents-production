@@ -137,3 +137,288 @@ Consider implementing a simple feedback system where reviewers can flag response
 
 Remember that evaluation is not a one-time effort but an ongoing process. As your system evolves and your users' need change, your evaluation criteria and methods should adapt accordingly. The goal is not perfection but continuous improvement in the aspects that matter most to your users and your business objectives. 
 
+### Examples:
+
+```typescript
+// ./evals/scorers.ts
+import type { Scorer } from 'autoevals'
+
+export const ToolCallMatch: Scorer<any, {}> = async ({
+    input,
+    output,
+    expected,
+}) => {
+    const score = 
+        output.role === 'assistant' &&
+        Array.isArray(output.tool_calls) &&
+        output.tool_calls.length === 1 &&
+        output.tool_calls[0].function?.name ===
+            expected.tool_calls[0].function?.name
+            ? 1
+            : 0
+
+    return {
+        name: 'ToolCallMatch',
+        score,
+    }
+}
+```
+
+```typescript
+// ./evals/experiments/reddit.eval.ts
+import { runEval } from '../evalTools'
+import { runLLM } from '../../src/llm'
+import { ToolCallMatch } from '../scorers'
+import { redditToolDefinition } from '../../src/tools/reddit'
+
+const createToolCallMessage = (toolName: string) => ({
+    role: 'assistant',
+    tool_calls: [
+        {
+            type: 'function',
+            function: { name: toolName },
+        }
+    ]
+})
+
+runEval('reddi', {
+    task: (input) => 
+        runLLM({
+            messages: [{role: 'user', content: input}],
+            tools: [redditToolDefinition],
+        }),
+    data: [
+        {
+            input: 'tell me something cool from reddit',
+            expected: [redditToolDefinition],
+        }
+    ],
+    scorers: [ToolCallMatch]
+})
+```
+
+```typescript
+// ./evals/experiments/dadJoke.eval.ts
+import { runEval } from '../evalTools'
+import { runLLM } from '../../src/llm'
+import { ToolCallMatch } from '../scorers'
+import { dadJokeToolDefinition } from '../../src/tools/dadJoke'
+
+const createToolCallMessage = (toolName: string) => ({
+  role: 'assistant',
+  tool_calls: [
+    {
+      type: 'function',
+      function: { name: toolName },
+    },
+  ],
+})
+
+runEval('dadJoke', {
+  task: (input) =>
+    runLLM({
+      messages: [{ role: 'user', content: input }],
+      tools: [dadJokeToolDefinition],
+    }),
+  data: [
+    {
+      input: 'tell me a dad joke',
+      expected: createToolCallMessage(dadJokeToolDefinition.name),
+    },
+  ],
+  scorers: [ToolCallMatch],
+})
+```
+
+```typescript
+// ./evals/experiments/generateImage.eval.ts
+import { runEval } from '../evalTools'
+import { runLLM } from '../../src/llm'
+import { ToolCallMatch } from '../scorers'
+import { generateImageToolDefinition } from '../../src/tools/generateImage'
+
+const createToolCallMessage = (toolName: string) => ({
+  role: 'assistant',
+  tool_calls: [
+    {
+      type: 'function',
+      function: { name: toolName },
+    },
+  ],
+})
+
+runEval('generateImage', {
+  task: (input) =>
+    runLLM({
+      messages: [{ role: 'user', content: input }],
+      tools: [generateImageToolDefinition],
+    }),
+  data: [
+    {
+      input: 'can you generate an image of a sunset',
+      expected: createToolCallMessage(generateImageToolDefinition.name),
+    },
+  ],
+  scorers: [ToolCallMatch],
+})
+```
+
+```typescript
+// ./evals/experiments/allTools.eval.ts
+import { runEval } from '../evalTools'
+import { runLLM } from '../../src/llm'
+import { ToolCallMatch } from '../scorers'
+import { redditToolDefinition } from '../../src/tools/reddit'
+import { generateImageToolDefinition } from '../../src/tools/generateImage'
+import { dadJokeToolDefinition } from '../../src/tools/dadJoke'
+import { movieSearchToolDefinition } from '../../src/tools/movieSearch'
+
+const createToolCallMessage = (toolName: string) => ({
+  role: 'assistant',
+  tool_calls: [
+    {
+      type: 'function',
+      function: { name: toolName },
+    },
+  ],
+})
+
+const allTools = [
+  redditToolDefinition,
+  generateImageToolDefinition,
+  dadJokeToolDefinition,
+  movieSearchToolDefinition,
+]
+
+runEval('allTools', {
+  task: (input) =>
+    runLLM({
+      messages: [{ role: 'user', content: input }],
+      tools: allTools,
+    }),
+  data: [
+    {
+      input: 'tell me something interesting from reddit',
+      expected: createToolCallMessage(redditToolDefinition.name),
+    },
+    {
+      input: 'generate an image of a mountain landscape',
+      expected: createToolCallMessage(generateImageToolDefinition.name),
+    },
+    {
+      input: 'tell me a dad joke',
+      expected: createToolCallMessage(dadJokeToolDefinition.name),
+    },
+    {
+      input: 'what movies did Christopher Nolan direct?',
+      expected: createToolCallMessage(movieSearchToolDefinition.name),
+    },
+  ],
+  scorers: [ToolCallMatch],
+})
+```
+
+# 3. RAG
+
+# Understanding and Implementing RAG Systems
+
+## What is Retrieval Augmented Generation?
+
+Retrieval Augmented Generation, or RAG, represents a fundamental shift in how we approah LLM knowledge enhancement. Rather than solely relying on an LLM's built-in knowledge, RAG dynamically injects relevant info into the conversation by retrieving it from an external knowledge base. Think of it as giving your LLM access to a personalized library that it can reference during conversations.
+
+## The RAG Pipeline
+
+Understanding RAG requires breaking down is core components and how they work together:
+
+### Document Processing
+
+The journey begins with your documents. These could be anything from technical manuals and research papers to customer support tickets and internal wikis. The processing pipeline typically involves:
+
+Text Extraction -- Converting various file formats into plain text while preserving important structural info. This seemingly simple step can become complex when dealing with PDFs, images with text, or documents with complex formatting.
+
+Chunking -- Breaking down documents into smaller, manageable pieces. This isn't as straightforward as it might seem. Chunk too small, and you lose context. Chunk too large, and you might dilute the relevance of your retrievals. The art lies in maintaining semantic coherence while optimizing for retrieval. (Scott: A naive v1 implementation would be to chunk by 100 tokens, but each following chunk will overlap with the previous chunk's last 20 tokens to try make the LLM have a better chance of retaining context.)
+
+### Embedding Generation
+
+Once you have your chunks, you need to convert them into a format that enables efficient similarity search. This is where embeddings come in -- dense vector representations of your text that capture semantic meaning. (Scott: Embeddings are the numerical representation of a piece of text)
+
+The choice of embedding model is crucial. While OpenAI's text-embedding-ada-002 is popular, you might opt for domain-specific models or newer alternatives like BGE or INSTRUCTOR. Each comes with its own tradeoffs in terms of accuracy, speed, and cost.
+
+### Storage and Indexing
+
+Your embeddings need to be stored in a way that enables fast retrieval. Vector databases like Pinecone, Weaviate, or FAISS become essential here. The choice of database and index type impacts both retrieval speed and accuracy.
+
+Consider factors like:
+
+- Update frequency of your knowledge base
+- Required query latency
+- Scale of your data
+- Cost considerations
+
+### Retrieval Process
+
+When a query comes in, RAG follows these steps:
+
+1. Convert the query into an embedding using the same model used for documents
+2. Search the vector database for similar chunks
+3. Filter and rank the results
+4. Format the retrieved context for injection into the prompt
+
+The complexity lies in optimizing each step. How many chunks should you retrieve? How should you handle context length limitations? How do you ensure diversity in your retrievals while maintaining relevance?
+
+## Beyond Question Answering
+
+While RAG is commonly associated with question answering, its applications extend much further:
+
+### Document Creation
+
+RAG can help generate documents by pullling in relevant information from your knowledge base. This ensures consistency with existing documentation and reduces the chance of hallucination.
+
+### Fact-Checking and Verification
+
+By comparing LLM outputs against retrieved information, RAG systems can verify factual accuracy and identify potential hallucinations.
+
+### Knowledge Synthesis
+
+RAG excels at combining information from multiple sources to create comprehensive responses, making it valuable for research and analysis tasks. 
+
+### Personalization
+
+By incorporating user-specific or organization-specific knowledge, RAG enables more contextually aware and personalized interactions.
+
+## The Challenges of RAG
+
+Building effective RAG systems comes with several significant challenges:
+
+### Relevance vs. Diversity
+
+Finding the right balance between retrieving highly similar chunks and maintaining enough diversity for comprehensive answers is an ongoing challenge. Too much focus on similarity can lead to redundant information, while too much diversity might introduce irrelevant context.
+
+### Context Window Management
+
+LLMs have limited context windows, so you need to be strategic about how much retrieved information you include. This often requries sophisticated chunk selection and prompt engineering.
+
+### Hallucination Control
+
+While RAG can reduce hallucinations, it doesn't eliminate it entirely. LLMs might still blend retrieved information with their pretrained knowledge in unexpected ways.
+
+### Performance Optimization
+
+Each component of the RAG pipeline presents optimzation opportunities:
+
+- Chunking strategies (size, overlap, metadata)
+- Embedding model selection and fine-tuning
+- Retrieval algorithsm and ranking methods
+- Prompt engineering for context integration
+
+## Best Practices for RAG Implementation
+
+Start with Clear Objectives -- Understand what you're trying to achieve with RAG. Different use cases might require different architectural choices. 
+
+Invest in Data Quality -- The quality of your RAG system is fundamentally limited by the quality of your knowledge base. Spend time cleaning and organizing your documents.
+
+Monitor and Iterate -- Track key metrics like retrieval relevance and response accuracy. Use this data to continously refine your system.
+
+Consider Hybrid Approaches -- Sometimes combining RAG with other techniques liek few-shot learning or tool use can provide better results than RAG alone. 
+
+The future of RAG lies in more sophisticated retrieval mechanisms, better integration with other AI techniques, and more efficient ways of managing and updating knowledge bases. As models and tools continue to evolve, the possibilities for enhancing LLM capabilities through RAG will only grow.
